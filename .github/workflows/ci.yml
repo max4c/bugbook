@@ -143,8 +143,10 @@ jobs:
             swift format lint "$file"
           done
 
-      - name: Run tests
-        run: swift test
+      # Full performance regression checks run in performance.yml on schedule or by manual dispatch.
+      # Keep PR CI fast enough that small CLI changes are reviewable.
+      - name: Run CLI tests
+        run: swift test --filter BugbookCLITests
 
       - name: Run smoke test
         run: bash scripts/smoke-cli.sh
