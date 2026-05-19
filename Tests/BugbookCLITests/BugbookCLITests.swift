@@ -2532,6 +2532,59 @@ final class BugbookCLITests: XCTestCase {
         XCTAssertTrue(pack.contains("# Test Context Pack"))
     }
 
+    func testArchitectureRepoCommandsOpenListCreateValidateAndReadPack() throws {
+        let workspace = try makeArchitectureRepoWorkspace()
+
+        let opened = try runJSON(
+            Architecture.Open.parseAsRoot([
+                workspace
+            ])
+        )
+        XCTAssertEqual(opened["detected"] as? Bool, true)
+        XCTAssertEqual(opened["adr_count"] as? Int, 1)
+
+        let listed = try runJSON(
+            Architecture.ListADR.parseAsRoot([
+                "--workspace", workspace
+            ])
+        )
+        XCTAssertEqual(listed["count"] as? Int, 1)
+        let adrs = try XCTUnwrap(listed["adrs"] as? [[String: Any]])
+        XCTAssertEqual(adrs.first?["title"] as? String, "Create Architecture Repo")
+
+        let created = try runJSON(
+            Architecture.CreateADR.parseAsRoot([
+                "--workspace", workspace,
+                "--status", "draft",
+                "--title", "Define Device Identity",
+                "--tags", "device", "security",
+                "--summary", "Define how Daso devices identify themselves to cloud systems.",
+                "--body", "Keep provider and stack choices undecided until the architecture record is reviewed.",
+                "--path", "adr/0002-define-device-identity.md"
+            ])
+        )
+
+        XCTAssertEqual(created["type"] as? String, "adr")
+        XCTAssertEqual(created["status"] as? String, "draft")
+        XCTAssertEqual(created["relative_path"] as? String, "adr/0002-define-device-identity.md")
+
+        let validate = try runJSON(
+            Architecture.Validate.parseAsRoot([
+                "--workspace", workspace
+            ])
+        )
+        XCTAssertEqual(validate["ok"] as? Bool, true)
+        XCTAssertTrue((validate["stdout"] as? String)?.contains("architecture valid") == true)
+
+        let pack = try captureStandardOutput {
+            var command = try Architecture.Pack.parseAsRoot([
+                "--workspace", workspace
+            ])
+            try command.run()
+        }
+        XCTAssertTrue(pack.contains("# Test Architecture Pack"))
+    }
+
     func testSharedAgentsTemplateCoversNotesBoardsSkillsAndTracking() {
         let template = AgentWorkspaceTemplate.agentsMarkdown(workspace: "/tmp/Bugbook")
         XCTAssertTrue(template.contains("## Notes And Pages"))
@@ -2822,6 +2875,79 @@ private func makeContextRepoWorkspace() throws -> String {
     print("context exported")
     """.write(
         toFile: (workspace as NSString).appendingPathComponent("scripts/export_context_pack.py"),
+        atomically: true,
+        encoding: .utf8
+    )
+    return workspace
+}
+
+private func makeArchitectureRepoWorkspace() throws -> String {
+    let workspace = try makeWorkspace()
+    let fm = FileManager.default
+    for directory in [
+        "adr",
+        "generated",
+        "scripts",
+        "system",
+    ] {
+        try fm.createDirectory(
+            atPath: (workspace as NSString).appendingPathComponent(directory),
+            withIntermediateDirectories: true
+        )
+    }
+
+    try "technical manifest".write(
+        toFile: (workspace as NSString).appendingPathComponent("TECHNICAL_MANIFEST.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try "agents".write(
+        toFile: (workspace as NSString).appendingPathComponent("AGENTS.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try "repo map".write(
+        toFile: (workspace as NSString).appendingPathComponent("system/repo-map.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try "system map".write(
+        toFile: (workspace as NSString).appendingPathComponent("system/system-map.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try "# Test Architecture Pack\n".write(
+        toFile: (workspace as NSString).appendingPathComponent("generated/architecture-context-pack.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try """
+    ---
+    id: adr_0001_create_architecture_repo
+    type: adr
+    status: accepted
+    title: Create Architecture Repo
+    owner: max
+    created_at: 2026-05-19
+    updated_at: 2026-05-19
+    tags:
+      - architecture
+    supersedes: []
+    superseded_by: []
+    ---
+
+    # Create Architecture Repo
+
+    Accepted starter ADR.
+    """.write(
+        toFile: (workspace as NSString).appendingPathComponent("adr/0001-create-architecture-repo.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try """
+    print("architecture valid")
+    """.write(
+        toFile: (workspace as NSString).appendingPathComponent("scripts/validate_architecture.py"),
         atomically: true,
         encoding: .utf8
     )
