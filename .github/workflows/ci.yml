@@ -48,6 +48,7 @@ jobs:
             ${{ runner.os }}-spm-v3-
 
       - name: Cache CEF runtime
+        if: github.event_name != 'pull_request'
         uses: actions/cache@v5
         with:
           path: macos/vendor/cef
@@ -56,6 +57,7 @@ jobs:
             ${{ runner.os }}-cef-
 
       - name: Verify Ghostty archive
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           ARCHIVE="Frameworks/GhosttyKit.xcframework/macos-arm64/libghostty-fat.a"
@@ -64,13 +66,21 @@ jobs:
           ar -t "$ARCHIVE" >/dev/null
 
       - name: Fetch CEF runtime
+        if: github.event_name != 'pull_request'
         run: bash scripts/fetch-cef.sh
 
-      - name: Build
+      - name: Build CLI product
+        if: github.event_name == 'pull_request'
+        run: |
+          swift build --product BugbookCLI
+
+      - name: Build package
+        if: github.event_name != 'pull_request'
         run: |
           swift build
 
       - name: Install XcodeGen
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           if ! command -v xcodegen >/dev/null 2>&1; then
