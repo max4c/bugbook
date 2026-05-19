@@ -43,12 +43,8 @@ extension Context {
 
         func run() throws {
             let repo = try ContextRepo(path: options.resolvedWorkspace)
-            let records = try repo.records().filter { record in
-                if let type, record.type != type.rawValue { return false }
-                if let status, record.status != status.rawValue { return false }
-                if let folder, !record.folder.hasPrefix(folder) { return false }
-                if let tag, !record.tags.contains(tag) { return false }
-                return true
+            let records = try repo.records().filter {
+                recordMatchesFilters($0, type: type, status: status, folder: folder, tag: tag)
             }
             try outputJSON(contextRecordListJSON(records: records, groupBy: groupBy, repo: repo))
         }
@@ -128,7 +124,7 @@ extension Context {
 
         func run() throws {
             let repo = try ContextRepo(path: options.resolvedWorkspace)
-            let result = try repo.runScript("scripts/validate_context.py")
+            let result = try repo.runScript(ContextRepo.validateScript)
             try outputJSON(result.toJSON())
         }
     }
@@ -143,7 +139,7 @@ extension Context {
 
         func run() throws {
             let repo = try ContextRepo(path: options.resolvedWorkspace)
-            let result = try repo.runScript("scripts/export_context_pack.py")
+            let result = try repo.runScript(ContextRepo.exportScript)
             try outputJSON(result.toJSON())
         }
     }
@@ -191,6 +187,9 @@ enum ContextRecordGroup: String, ExpressibleByArgument {
 
 private struct ContextRepo {
     let path: String
+
+    static let validateScript = "scripts/validate_context.py"
+    static let exportScript = "scripts/export_context_pack.py"
 
     private var recordsPath: String {
         (path as NSString).appendingPathComponent("records")
@@ -309,8 +308,8 @@ private struct ContextRepo {
         "CONTEXT_MANIFEST.md",
         "AGENTS.md",
         "records",
-        "scripts/validate_context.py",
-        "scripts/export_context_pack.py",
+        validateScript,
+        exportScript,
     ]
 
     private static func validateContextRepo(at path: String) throws {
@@ -412,18 +411,14 @@ private struct ContextRecordCreateRequest {
 }
 
 private struct ContextRecord {
-    let absolutePath: String
     let relativePath: String
     let frontmatter: [String: Any]
-    let body: String
 
     init?(path: String, repoPath: String) throws {
         let content = try String(contentsOfFile: path, encoding: .utf8)
-        guard let parsed = parseFrontmatter(content) else { return nil }
-        absolutePath = path
+        guard let frontmatter = parseFrontmatter(content) else { return nil }
         relativePath = BugbookCLI.relativePath(from: path, workspace: repoPath)
-        frontmatter = parsed.frontmatter
-        body = parsed.body
+        self.frontmatter = frontmatter
     }
 
     var id: String { frontmatter["id"] as? String ?? "" }
@@ -467,11 +462,6 @@ private struct ContextScriptResult {
     }
 }
 
-private struct ContextFrontmatterParseResult {
-    let frontmatter: [String: Any]
-    let body: String
-}
-
 private func contextRecordListJSON(
     records: [ContextRecord],
     groupBy: ContextRecordGroup,
@@ -480,7 +470,13 @@ private func contextRecordListJSON(
     let groups: [[String: Any]]
     switch groupBy {
     case .none:
-        groups = [["key": "all", "count": records.count, "records": records.map { $0.toJSON() }]]
+        groups = [
+            [
+                "key": "all",
+                "count": records.count,
+                "records": records.map { $0.toJSON() },
+            ],
+        ]
     case .tag:
         groups = groupedRecordsByTag(records)
     default:
@@ -504,6 +500,20 @@ private func contextRecordListJSON(
         "group_by": groupBy.rawValue,
         "groups": groups,
     ]
+}
+
+private func recordMatchesFilters(
+    _ record: ContextRecord,
+    type: ContextRecordType?,
+    status: ContextRecordStatus?,
+    folder: String?,
+    tag: String?
+) -> Bool {
+    if let type, record.type != type.rawValue { return false }
+    if let status, record.status != status.rawValue { return false }
+    if let folder, !record.folder.hasPrefix(folder) { return false }
+    if let tag, !record.tags.contains(tag) { return false }
+    return true
 }
 
 private func groupedRecords(
@@ -540,7 +550,7 @@ private func groupedRecordsByTag(_ records: [ContextRecord]) -> [[String: Any]] 
         .sorted { ($0["key"] as? String ?? "") < ($1["key"] as? String ?? "") }
 }
 
-private func parseFrontmatter(_ content: String) -> ContextFrontmatterParseResult? {
+private func parseFrontmatter(_ content: String) -> [String: Any]? {
     guard content.hasPrefix("---\n"),
           let endRange = content.range(of: "\n---\n", range: content.index(content.startIndex, offsetBy: 4)..<content.endIndex) else {
         return nil
@@ -548,12 +558,11 @@ private func parseFrontmatter(_ content: String) -> ContextFrontmatterParseResul
 
     let yamlStart = content.index(content.startIndex, offsetBy: 4)
     let yaml = String(content[yamlStart..<endRange.lowerBound])
-    let body = String(content[endRange.upperBound...])
     guard let loaded = try? Yams.load(yaml: yaml),
           let frontmatter = jsonCompatibleObject(loaded) as? [String: Any] else {
         return nil
     }
-    return ContextFrontmatterParseResult(frontmatter: frontmatter, body: body)
+    return frontmatter
 }
 
 private func stringList(_ value: Any?) -> [String] {
@@ -577,7 +586,10 @@ private func yamlList(key: String, values: [String]) -> [String] {
 }
 
 private func yamlQuoted(_ value: String) -> String {
-    "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+    let escaped = value
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+    return "\"\(escaped)\""
 }
 
 private func slugify(_ value: String) -> String {
